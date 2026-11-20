@@ -177,8 +177,16 @@ class MainActivity : Activity() {
                 put(CallLog.Calls.NEW, 0)
             }
         }.toTypedArray()
-        val inserted = if (values.isEmpty()) 0
-        else contentResolver.bulkInsert(CallLog.Calls.CONTENT_URI, values)
+        // Insert in chunks: one bulkInsert is a single Binder transaction (~1 MB cap), and
+        // ContentResolver swallows the TransactionTooLargeException and just returns 0.
+        var inserted = 0
+        for (chunk in values.asList().chunked(INSERT_CHUNK)) {
+            val n = contentResolver.bulkInsert(CallLog.Calls.CONTENT_URI, chunk.toTypedArray())
+            if (n == 0) error("call log rejected the insert after $inserted of ${values.size} calls")
+            inserted += n
+            val done = inserted
+            runOnUiThread { status.text = "Restoring… $done / ${values.size}" }
+        }
         val skipped = incoming.size - toInsert.size
         return "Restored $inserted calls" + if (skipped > 0) " ($skipped already present)." else "."
     }
@@ -187,5 +195,6 @@ class MainActivity : Activity() {
         private const val REQ_PERMS = 1
         private const val REQ_BACKUP = 2
         private const val REQ_RESTORE = 3
+        private const val INSERT_CHUNK = 200 // ~40 KB per Binder call, well under the cap
     }
 }
